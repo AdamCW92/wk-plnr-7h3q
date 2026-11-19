@@ -122,6 +122,10 @@ main{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px
 .cats label{display:flex;align-items:center;gap:6px;border:2px solid transparent;border-radius:999px;padding:5px 10px;font-weight:800;font-size:.85rem;color:#fff;background:var(--c);cursor:pointer}
 .cats input{position:absolute;opacity:0;width:0;height:0}
 .cats label:has(input:checked){border-color:var(--fg);box-shadow:0 0 0 2px var(--surface) inset}
+.daypick label{color:var(--fg);background:var(--surface);border-color:var(--line)}
+.daypick label:has(input:checked){background:var(--accent);color:var(--accent-fg);border-color:var(--accent);box-shadow:none}
+.copyday{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:800;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:8px}
+.copyday:hover{color:var(--accent)}
 .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
 .actions .danger{margin-right:auto}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:999px;font-weight:800;z-index:30;box-shadow:var(--shadow)}
@@ -736,7 +740,7 @@ function renderWeek(){
   const host=$("#view-week"), tk=dayKey(new Date());
   host.innerHTML=`<div class="daytabs" role="tablist">${DAYS.map(([k,n])=>`<button role="tab" data-day-tab="${k}" aria-selected="${k===activeDay}">${n.slice(0,3)}</button>`).join("")}</div>
   <div class="week">${DAYS.map(([k,n])=>{const d=plan.days[k]||{blocks:[],bring:""};return `
-    <div class="day ${k===activeDay?"active":""} ${k===tk?"today-col":""}"><h3>${n}${k===tk?"<span>Today</span>":""}</h3>
+    <div class="day ${k===activeDay?"active":""} ${k===tk?"today-col":""}"><h3>${n}<span style="display:flex;gap:6px;align-items:center">${k===tk?"<span>Today</span>":""}<button type="button" class="copyday edit-only" data-copyday="${k}" title="Copy this day to other days">Copy day</button></span></h3>
       ${sorted(d.blocks).map(b=>blockHTML(b,{day:k})).join("")}
       <button class="add" data-add="${k}">+ Add</button>
       <button class="bringline" data-bring="${k}"><b>Bring:</b> ${d.bring?esc(d.bring):"<i>tap to add kit, books, forms…</i>"}</button>
@@ -761,17 +765,40 @@ function openEditor(dayK, block){
     <div class="field"><label for="f-end">End</label><input id="f-end" type="time" required value="${esc(b.end)}"></div></div>
     <div class="field"><label>Type</label><div class="cats">${Object.entries(CATS).map(([k,n])=>`<label style="--c:var(--c-${k})"><input type="radio" name="cat" value="${k}" ${k===b.cat?"checked":""}>${n}</label>`).join("")}</div></div>
     <div class="field"><label for="f-note">Note (optional)</label><input id="f-note" maxlength="120" value="${esc(b.note)}" placeholder="e.g. bring PE kit"></div>
+    ${isNew?"":`<div class="field"><label>Copy this block to</label><div class="cats daypick">${dayChips(dayK)}</div>
+    <div class="actions" style="justify-content:flex-start"><button type="button" class="ghost" id="f-copyto">Copy to selected days</button></div></div>`}
     <div class="actions">${isNew?"":'<button type="button" class="danger" id="f-del">Delete</button>'}<button type="button" class="ghost" id="f-cancel">Cancel</button><button class="primary" type="submit">Save</button></div>
   </form>`);
   $("#f-title").focus();
+  const ct=$("#f-copyto"); if(ct) ct.onclick=()=>{ const targets=pickedDays(host); if(!targets.length){ toast("Pick at least one day"); return }
+    const nb=readBlockForm(host,b); for(const k of targets){ plan.days[k]=plan.days[k]||{blocks:[],bring:""}; plan.days[k].blocks.push({...nb,id:uid()}); }
+    host.innerHTML=""; save(); toast("Copied to "+targets.length+(targets.length===1?" day":" days")); };
   const del=$("#f-del"); if(del) del.onclick=()=>{ if(del.dataset.armed){ plan.days[dayK].blocks=plan.days[dayK].blocks.filter(x=>x.id!==b.id); host.innerHTML=""; save(); } else { del.dataset.armed="1"; del.textContent="Tap again to delete"; } };
   $("#edf").onsubmit=e=>{ e.preventDefault();
-    const nb={id:b.id,title:$("#f-title").value.trim(),start:$("#f-start").value,end:$("#f-end").value,cat:(host.querySelector('input[name=cat]:checked')||{}).value||"chill",note:$("#f-note").value.trim()};
-    if(mins(nb.end)<mins(nb.start)) nb.end=nb.start;
+    const nb=readBlockForm(host,b);
     plan.days[dayK]=plan.days[dayK]||{blocks:[],bring:""};
     const i=plan.days[dayK].blocks.findIndex(x=>x.id===b.id);
     if(i>=0) plan.days[dayK].blocks[i]=nb; else plan.days[dayK].blocks.push(nb);
     host.innerHTML=""; save(); };
+}
+function readBlockForm(host,b){
+  const nb={id:b.id,title:$("#f-title").value.trim(),start:$("#f-start").value,end:$("#f-end").value,cat:(host.querySelector('input[name=cat]:checked')||{}).value||"chill",note:$("#f-note").value.trim()};
+  if(mins(nb.end)<mins(nb.start)) nb.end=nb.start; return nb;
+}
+function dayChips(exceptK){ return DAYS.filter(([k])=>k!==exceptK).map(([k,n])=>`<label><input type="checkbox" name="day" value="${k}">${n.slice(0,3)}</label>`).join(""); }
+function pickedDays(host){ return [...host.querySelectorAll('input[name=day]:checked')].map(i=>i.value); }
+function openCopyDay(dayK){
+  const src=plan.days[dayK]||{blocks:[],bring:""}, name=DAYS.find(x=>x[0]===dayK)[1];
+  const host=sheet(`<form id="cdf"><h2>Copy ${name} to…</h2>
+    <p>${src.blocks.length} block${src.blocks.length===1?"":"s"} will be copied. The "Bring" list stays as it is on each day.</p>
+    <div class="field"><label>Days</label><div class="cats daypick">${dayChips(dayK)}</div></div>
+    <div class="field"><label>How</label><div class="cats daypick"><label><input type="radio" name="mode" value="replace" checked>Replace those days</label><label><input type="radio" name="mode" value="add">Add to those days</label></div></div>
+    <div class="actions"><button type="button" class="ghost" id="f-cancel">Cancel</button><button class="primary" type="submit">Copy</button></div></form>`);
+  $("#cdf").onsubmit=e=>{ e.preventDefault(); const targets=pickedDays(host); if(!targets.length){ toast("Pick at least one day"); return }
+    const mode=(host.querySelector('input[name=mode]:checked')||{}).value||"replace";
+    for(const k of targets){ plan.days[k]=plan.days[k]||{blocks:[],bring:""}; const copies=src.blocks.map(b=>({...b,id:uid()}));
+      plan.days[k].blocks=mode==="replace"?copies:plan.days[k].blocks.concat(copies); }
+    host.innerHTML=""; save(); toast(name+" copied to "+targets.length+(targets.length===1?" day":" days")); };
 }
 function openBring(dayK){
   const d=plan.days[dayK]||(plan.days[dayK]={blocks:[],bring:""});
@@ -837,6 +864,7 @@ document.addEventListener("click",e=>{
   if(t.dataset.dayTab){ activeDay=t.dataset.dayTab; render(); return }
   if(t.dataset.add){ openEditor(t.dataset.add); return }
   if(t.dataset.bring){ openBring(t.dataset.bring); return }
+  if(t.dataset.copyday){ openCopyDay(t.dataset.copyday); return }
   if(t.classList.contains("block")){
     const k=t.dataset.day, b=(plan.days[k]||{blocks:[]}).blocks.find(x=>x.id===t.dataset.id); if(!b) return;
     if(view==="today"&&!wall){ done[b.id]=!done[b.id]; try{localStorage.setItem("done:"+todayStamp(),JSON.stringify(done))}catch(x){}; render(); }
